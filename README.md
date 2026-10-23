@@ -1,6 +1,6 @@
 # conv-vae-pytorch
 
-![tests](https://github.com/GITHUB_USERNAME/conv-vae-pytorch/actions/workflows/tests.yml/badge.svg)
+![tests](https://github.com/g-Poulami/conv-vae-pytorch/actions/workflows/tests.yml/badge.svg)
 
 A small, self-contained **variational autoencoder (VAE)** in PyTorch, trained on binarised MNIST and runnable on any 2D [MedMNIST](https://medmnist.com/) dataset (e.g. chest X-rays, blood cell microscopy, abdominal CT). The goal is a clean, tested reference implementation: a convolutional encoder and decoder, the reparameterisation trick, a closed-form KL term, and evaluation that goes beyond the training loss (an importance-weighted likelihood estimate and a check for posterior collapse).
 
@@ -57,7 +57,7 @@ Binarised MNIST: 55,000 training images (resampled each epoch), 5,000 held out f
 ## Quick start
 
 ```bash
-git clone https://github.com/GITHUB_USERNAME/conv-vae-pytorch.git
+git clone https://github.com/g-Poulami/conv-vae-pytorch.git
 cd conv-vae-pytorch
 pip install -r requirements.txt
 
