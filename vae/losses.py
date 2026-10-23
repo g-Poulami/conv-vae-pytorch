@@ -27,7 +27,7 @@ def bernoulli_nll(logits: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 def elbo_terms(model, x: torch.Tensor, beta: float = 1.0):
     """Return (loss, reconstruction NLL, KL); loss is the beta-weighted negative ELBO averaged over the batch."""
     logits, mu, logvar = model(x)
-    rec = bernoulli_nll(logits, x)
+    rec = model.pixel_nll(logits, x).flatten(1).sum(1)
     kl = gaussian_kl(mu, logvar)
     loss = (rec + beta * kl).mean()
     return loss, rec, kl
@@ -57,9 +57,7 @@ def iwae_nll(model, x: torch.Tensor, k: int = 100, chunk: int = 25) -> torch.Ten
         log_q = _log_normal(z, mu, logvar)
         log_p_z = -0.5 * (_LOG_2PI + z.pow(2)).sum(-1)
         logits = model.decode(z.reshape(kc * b, d)).reshape(kc, b, *x.shape[1:])
-        log_p_x = -F.binary_cross_entropy_with_logits(
-            logits, x.expand_as(logits), reduction="none"
-        ).flatten(2).sum(-1)
+        log_p_x = -model.pixel_nll(logits, x.expand_as(logits)).flatten(2).sum(-1)
         log_w.append(log_p_x + log_p_z - log_q)
     log_w = torch.cat(log_w, dim=0)  # (k, b)
     return -(torch.logsumexp(log_w, dim=0) - math.log(k))

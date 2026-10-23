@@ -1,6 +1,6 @@
 """Data loading for MNIST, Fashion-MNIST and any 2D MedMNIST dataset at 28x28.
 
-MNIST and Fashion-MNIST are binarised: dynamically (resampled every epoch)
+MNIST and Fashion-MNIST are binarised by default: dynamically (resampled every epoch)
 for training, and once with a fixed seed for validation and test so the
 reported likelihoods are reproducible and comparable with the literature.
 MedMNIST images are kept as grey-level / RGB intensities in [0, 1].
@@ -66,11 +66,11 @@ class _MedMNISTWrapper(Dataset):
         return x, int(y[0]) if y.numel() == 1 else -1
 
 
-def _torchvision_splits(name: str, root: str, seed: int):
+def _torchvision_splits(name: str, root: str, seed: int, binarise: bool = True):
     cls = TORCHVISION_SETS[name]
     to_tensor = transforms.ToTensor()
-    train_dyn = cls(root, train=True, download=True,
-                    transform=transforms.Compose([to_tensor, DynamicBinarise()]))
+    train_tf = transforms.Compose([to_tensor, DynamicBinarise()]) if binarise else to_tensor
+    train_dyn = cls(root, train=True, download=True, transform=train_tf)
     train_plain = cls(root, train=True, download=True, transform=to_tensor)
     test_plain = cls(root, train=False, download=True, transform=to_tensor)
 
@@ -78,10 +78,12 @@ def _torchvision_splits(name: str, root: str, seed: int):
     val_idx, train_idx = perm[:N_VAL].tolist(), perm[N_VAL:].tolist()
 
     train = Subset(train_dyn, train_idx)
-    val = StaticBinarised(Subset(train_plain, val_idx))
-    test = StaticBinarised(test_plain)
+    if binarise:
+        val, test = StaticBinarised(Subset(train_plain, val_idx)), StaticBinarised(test_plain)
+    else:
+        val, test = Subset(train_plain, val_idx), test_plain
     info = DataInfo(name=name, channels=1, n_classes=10,
-                    class_names=list(train_plain.classes), binarised=True)
+                    class_names=list(train_plain.classes), binarised=binarise)
     return train, val, test, info
 
 
@@ -106,19 +108,19 @@ def _medmnist_splits(flag: str, root: str):
     return (*splits, info)
 
 
-def get_datasets(name: str, root: str = "data", seed: int = 0):
-    """Return (train, val, test, DataInfo) for the named dataset."""
+def get_datasets(name: str, root: str = "data", seed: int = 0, binarise: bool = True):
+    """Return (train, val, test, DataInfo). `binarise` applies to MNIST / Fashion-MNIST only."""
     name = name.lower()
     if name in TORCHVISION_SETS:
-        return _torchvision_splits(name, root, seed)
+        return _torchvision_splits(name, root, seed, binarise)
     import os
     os.makedirs(root, exist_ok=True)
     return _medmnist_splits(name, root)
 
 
 def get_loaders(name: str, root: str = "data", batch_size: int = 128,
-                num_workers: int = 2, seed: int = 0):
-    train, val, test, info = get_datasets(name, root, seed)
+                num_workers: int = 2, seed: int = 0, binarise: bool = True):
+    train, val, test, info = get_datasets(name, root, seed, binarise)
     g = torch.Generator().manual_seed(seed)
     kw = dict(batch_size=batch_size, num_workers=num_workers)
     return (

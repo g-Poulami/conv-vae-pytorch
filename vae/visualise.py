@@ -138,7 +138,7 @@ def main() -> None:
     device = get_device(args.device)
     model, ckpt = load_checkpoint(args.run_dir / args.checkpoint, device)
     cfg = ckpt["train_config"]
-    _, _, test_loader, info = get_loaders(cfg["dataset"], args.data_dir, cfg["batch_size"], 0, cfg["seed"])
+    _, _, test_loader, info = get_loaders(cfg["dataset"], args.data_dir, cfg["batch_size"], 0, cfg["seed"], not cfg.get("no_binarise", False))
     make_all_figures(model, test_loader, info, device, args.run_dir / "figures", args.run_dir / "history.csv")
     print(f"Figures written to {args.run_dir / 'figures'}")
 

@@ -65,7 +65,7 @@ def main() -> None:
     device = get_device(args.device)
     model, ckpt = load_checkpoint(args.run_dir / args.checkpoint, device)
     cfg = ckpt["train_config"]
-    _, _, test_loader, _ = get_loaders(cfg["dataset"], args.data_dir, 256, 0, cfg["seed"])
+    _, _, test_loader, _ = get_loaders(cfg["dataset"], args.data_dir, 256, 0, cfg["seed"], not cfg.get("no_binarise", False))
     metrics = evaluate(model, test_loader, device, args.iw_samples)
     metrics["checkpoint_epoch"] = ckpt.get("epoch")
     write_json(args.run_dir / "test_metrics.json", metrics)

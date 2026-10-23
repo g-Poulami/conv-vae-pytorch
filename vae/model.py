@@ -2,14 +2,27 @@
 
 Encoder q(z|x): two strided convolutions, a hidden dense layer, then two
 linear heads giving the mean and log-variance of a diagonal Gaussian.
-Decoder p(x|z): the mirror image, ending in per-pixel logits so the
-reconstruction term can be computed with a numerically stable
-binary cross-entropy.
+Decoder p(x|z): the mirror image, ending in per-pixel logits.
+
+Two decoder likelihoods are supported:
+  * "bernoulli": for binary images (binarised MNIST); the reconstruction
+    term is a numerically stable binary cross-entropy on the logits.
+  * "gaussian": for grey-level or colour images (MedMNIST); the mean is
+    sigmoid(logits) and a single noise scale sigma is calibrated from the
+    data (the "optimal sigma" decoder of Rybkin et al., 2021). During
+    training sigma is set to the RMS reconstruction error of the batch;
+    a running average of it is stored and used at evaluation time.
 """
 from __future__ import annotations
 
+import math
+
 import torch
+import torch.nn.functional as F
 from torch import nn
+
+LIKELIHOODS = ("bernoulli", "gaussian")
+_HALF_LOG_2PI = 0.5 * math.log(2 * math.pi)
 
 
 class ConvVAE(nn.Module):
@@ -19,14 +32,23 @@ class ConvVAE(nn.Module):
         latent_dim: int = 16,
         hidden_dim: int = 256,
         image_size: int = 28,
+        likelihood: str = "bernoulli",
     ) -> None:
         super().__init__()
         if image_size != 28:
             raise ValueError("ConvVAE is built for 28x28 inputs (MNIST / MedMNIST size 28).")
+        if likelihood not in LIKELIHOODS:
+            raise ValueError(f"likelihood must be one of {LIKELIHOODS}")
         self.in_channels = in_channels
         self.latent_dim = latent_dim
         self.hidden_dim = hidden_dim
         self.image_size = image_size
+        self.likelihood = likelihood
+        if likelihood == "gaussian":
+            # running estimate of log sigma, used in eval mode; starts at sigma = 0.1
+            self.register_buffer("log_sigma", torch.tensor(math.log(0.1)))
+        self.sigma_momentum = 0.99
+        self.min_log_sigma = math.log(1e-3)
 
         feat = 64 * 7 * 7  # spatial size after two stride-2 convs: 28 -> 14 -> 7
 
@@ -73,6 +95,21 @@ class ConvVAE(nn.Module):
         z = self.reparameterise(mu, logvar)
         return self.decode(z), mu, logvar
 
+    def pixel_nll(self, logits: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        """Element-wise -log p(x|z) (same shape as x); callers sum over pixels."""
+        if self.likelihood == "bernoulli":
+            return F.binary_cross_entropy_with_logits(logits, x, reduction="none")
+        mean = torch.sigmoid(logits)
+        if self.training:
+            # optimal sigma for this batch, treated as a constant (no gradient)
+            mse = (x - mean).pow(2).mean().detach()
+            log_sigma = (0.5 * torch.log(mse)).clamp_min(self.min_log_sigma)
+            with torch.no_grad():
+                self.log_sigma.mul_(self.sigma_momentum).add_((1 - self.sigma_momentum) * log_sigma)
+        else:
+            log_sigma = self.log_sigma
+        return 0.5 * (x - mean).pow(2) * torch.exp(-2 * log_sigma) + log_sigma + _HALF_LOG_2PI
+
     # ------------------------------------------------------------------ #
     @torch.no_grad()
     def sample(self, n: int, device: torch.device | str = "cpu") -> torch.Tensor:
@@ -92,4 +129,5 @@ class ConvVAE(nn.Module):
             "latent_dim": self.latent_dim,
             "hidden_dim": self.hidden_dim,
             "image_size": self.image_size,
+            "likelihood": self.likelihood,
         }

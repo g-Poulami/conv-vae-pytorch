@@ -2,7 +2,7 @@
 
 Examples:
     python -m vae.train --dataset mnist --latent-dim 16 --epochs 30
-    python -m vae.train --dataset pneumoniamnist --latent-dim 16 --epochs 50
+    python -m vae.train --dataset pneumoniamnist --latent-dim 16 --epochs 50   # Gaussian decoder (auto)
     python -m vae.train --dataset mnist --latent-dim 2 --epochs 20 --name mnist_z2
 
 Each run writes to runs/<name>/: config.json, history.csv, best.pt
@@ -29,6 +29,10 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dataset", default="mnist",
                    help="mnist, fashionmnist, or a 2D MedMNIST flag (pneumoniamnist, bloodmnist, ...)")
+    p.add_argument("--likelihood", choices=["auto", "bernoulli", "gaussian"], default="auto",
+                   help="decoder likelihood; auto = bernoulli for binarised data, gaussian otherwise")
+    p.add_argument("--no-binarise", action="store_true",
+                   help="keep MNIST / Fashion-MNIST as grey levels instead of binarising")
     p.add_argument("--latent-dim", type=int, default=16)
     p.add_argument("--hidden-dim", type=int, default=256)
     p.add_argument("--epochs", type=int, default=30)
@@ -61,18 +65,23 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     train_loader, val_loader, test_loader, info = get_loaders(
-        args.dataset, args.data_dir, args.batch_size, args.num_workers, args.seed
+        args.dataset, args.data_dir, args.batch_size, args.num_workers, args.seed, not args.no_binarise
     )
-    model = ConvVAE(in_channels=info.channels, latent_dim=args.latent_dim, hidden_dim=args.hidden_dim).to(device)
+    likelihood = args.likelihood
+    if likelihood == "auto":
+        likelihood = "bernoulli" if info.binarised else "gaussian"
+    model = ConvVAE(in_channels=info.channels, latent_dim=args.latent_dim,
+                    hidden_dim=args.hidden_dim, likelihood=likelihood).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     n_params = sum(p.numel() for p in model.parameters())
     train_config = {**vars(args), "n_params": n_params, "device": str(device),
                     "n_train": len(train_loader.dataset), "n_val": len(val_loader.dataset),
-                    "n_test": len(test_loader.dataset), "binarised": info.binarised}
+                    "n_test": len(test_loader.dataset), "binarised": info.binarised,
+                    "likelihood_resolved": likelihood}
     write_json(run_dir / "config.json", train_config)
     print(f"{info.name}: {train_config['n_train']} train / {train_config['n_val']} val / "
-          f"{train_config['n_test']} test | {n_params:,} parameters | device {device}")
+          f"{train_config['n_test']} test | {n_params:,} parameters | {likelihood} decoder | device {device}")
 
     history_path = run_dir / "history.csv"
     fields = ["epoch", "beta", "train_neg_elbo", "train_rec", "train_kl",

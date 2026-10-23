@@ -2,7 +2,7 @@
 
 ![tests](https://github.com/g-Poulami/conv-vae-pytorch/actions/workflows/tests.yml/badge.svg)
 
-A small, self-contained **variational autoencoder (VAE)** in PyTorch, trained on binarised MNIST and runnable on any 2D [MedMNIST](https://medmnist.com/) dataset (e.g. chest X-rays, blood cell microscopy, abdominal CT). The goal is a clean, tested reference implementation: a convolutional encoder and decoder, the reparameterisation trick, a closed-form KL term, and evaluation that goes beyond the training loss (an importance-weighted likelihood estimate and a check for posterior collapse).
+A small, self-contained **variational autoencoder (VAE)** in PyTorch, trained on binarised MNIST and on [PneumoniaMNIST](https://medmnist.com/) paediatric chest X-rays, and runnable on any 2D MedMNIST dataset (e.g. blood cell microscopy, abdominal CT). The goal is a clean, tested reference implementation: a convolutional encoder and decoder, the reparameterisation trick, a closed-form KL term, and evaluation that goes beyond the training loss (an importance-weighted likelihood estimate and a check for posterior collapse).
 
 <p align="center">
   <img src="assets/mnist_z16/samples.png" width="230" alt="Samples from the prior">
@@ -17,7 +17,7 @@ A small, self-contained **variational autoencoder (VAE)** in PyTorch, trained on
 |---|---|
 | Encoder q(z\|x) | Conv 4x4/2 (32) → Conv 4x4/2 (64) → Dense 256 → two heads giving μ and log σ² |
 | Latent | Diagonal Gaussian, 16 dimensions by default (2 for visualisation) |
-| Decoder p(x\|z) | Dense 256 → Dense 64·7·7 → ConvT 4x4/2 (32) → ConvT 4x4/2 (C), per-pixel Bernoulli logits |
+| Decoder p(x\|z) | Dense 256 → Dense 64·7·7 → ConvT 4x4/2 (32) → ConvT 4x4/2 (C); Bernoulli likelihood for binary images, calibrated Gaussian for grey-level and colour images |
 | Parameters | 1,688,289 (16-D latent, 1 channel) |
 
 Training maximises the evidence lower bound
@@ -54,6 +54,43 @@ Binarised MNIST: 55,000 training images (resampled each epoch), 5,000 held out f
 ### Training curves (16-D model)
 ![loss curves](assets/mnist_z16/loss_curves.png)
 
+## Results on PneumoniaMNIST (chest X-rays)
+
+PneumoniaMNIST (Yang et al., 2023) contains 28x28 grey-level paediatric chest X-rays labelled normal or pneumonia, with official splits of 4,708 training, 524 validation and 624 test images. The model, latent size (16) and training settings are the same as for MNIST, and the labels are never used in training.
+
+The first run used the same binary cross-entropy loss as MNIST, and the model largely ignored its latent space. Switching to the calibrated Gaussian decoder (see [Design notes](#design-notes)) fixed this:
+
+| Decoder | KL, information carried by the latent (nats) | Active units | Checkpoint epoch |
+|---|---|---|---|
+| Binary cross-entropy | 4.66 | 9 / 16 | 50 |
+| Calibrated Gaussian | **46.74** | **16 / 16** | 48 |
+
+Test-set values. With cross-entropy, 7 of the 16 latent dimensions collapsed to the prior and each X-ray was encoded with under 5 nats of information, so outputs were close to an average chest. The Gaussian decoder carries ten times more information and uses every dimension. (The ELBO itself is not comparable between the two decoders; for the Gaussian model the test −ELBO is −1189.87 nats and the importance-weighted estimate −1212.01 nats, as continuous densities. Full metrics are in [`results/`](results).)
+
+### Samples from the prior
+<p align="center">
+  <img src="assets/pneumoniamnist_bce_z16/samples.png" width="230" alt="Samples, cross-entropy decoder">
+  &nbsp;&nbsp;
+  <img src="assets/pneumoniamnist_z16/samples.png" width="230" alt="Samples, calibrated Gaussian decoder">
+</p>
+<p align="center"><em>Left: cross-entropy decoder. Right: calibrated Gaussian decoder, with visible lung fields, ribs and variation in patient position and exposure.</em></p>
+
+### Reconstructions (top: test X-rays, bottom: reconstruction), Gaussian decoder
+![PneumoniaMNIST reconstructions](assets/pneumoniamnist_z16/reconstructions.png)
+
+### Latent interpolation between pairs of test X-rays
+![PneumoniaMNIST interpolations](assets/pneumoniamnist_z16/interpolations.png)
+
+### Latent space and training curves
+<p align="center">
+  <img src="assets/pneumoniamnist_z16/latent_space.png" width="420" alt="PneumoniaMNIST latent space, PCA">
+</p>
+<p align="center"><em>Posterior means of the 624 test X-rays (PCA of the 16-D latent), coloured by diagnosis. Normal and pneumonia images partially separate even though the model never saw a label.</em></p>
+
+![PneumoniaMNIST loss curves](assets/pneumoniamnist_z16/loss_curves.png)
+
+Validation loss levels off after about 30 epochs while training loss keeps improving (a gap of 78 nats by epoch 50), which is mild overfitting on this small training set; the checkpoint with the best validation ELBO (epoch 48) is the one evaluated.
+
 ## Quick start
 
 ```bash
@@ -67,7 +104,7 @@ python -m vae.train --dataset mnist --latent-dim 16 --epochs 50
 # 2-D latent model for the manifold and latent-space plots
 python -m vae.train --dataset mnist --latent-dim 2 --epochs 30
 
-# medical images (downloaded automatically by the medmnist package)
+# medical images (downloaded automatically by the medmnist package; Gaussian decoder by default)
 python -m vae.train --dataset pneumoniamnist --latent-dim 16 --epochs 50
 python -m vae.train --dataset bloodmnist     --latent-dim 16 --epochs 50
 
@@ -101,22 +138,24 @@ vae/
   evaluate.py    test-set metrics for a saved checkpoint
   visualise.py   reconstructions, samples, interpolations, latent plots, curves
 tests/
-  test_vae.py    shapes, KL against torch.distributions, IW bound tightening, overfitting a batch
+  test_vae.py    shapes, KL and Gaussian likelihood against torch.distributions, IW bound
+                 tightening, sigma calibration, overfitting a batch
 results/         metrics and training history for the runs reported above
 assets/          figures used in this README
 ```
 
 ## Design notes
 
-* **Bernoulli decoder on binarised data.** The decoder outputs logits and the reconstruction term is a binary cross-entropy, which is an exact log-likelihood only for binary pixels. Binarising MNIST makes the reported nats meaningful and comparable with the VAE literature. For grey-level MedMNIST images the same loss is used as a standard reconstruction objective, so those numbers should be read as training losses rather than likelihoods.
+* **The decoder likelihood matches the data.** For binarised MNIST the decoder is Bernoulli and the reconstruction term is a binary cross-entropy, an exact log-likelihood for binary pixels, so the reported nats are comparable with the VAE literature. Binary cross-entropy is a poor choice for grey-level images: it behaves like a Gaussian decoder with a very large, fixed noise level, so the model can explain away image detail as noise and leave most of its latent space unused. For grey-level and colour data (all MedMNIST sets) the default is therefore a Gaussian decoder whose noise scale σ is calibrated to the reconstruction error (the "optimal σ" decoder of Rybkin et al., 2021). Override with `--likelihood bernoulli` or `--likelihood gaussian`. Gaussian results are continuous densities, so their nats are not comparable with the Bernoulli numbers.
 * **Model selection on a validation split**, never the test set.
-* **Tests check the maths, not just the shapes**: the closed-form KL is compared with `torch.distributions`, and the importance-weighted bound is checked to be tighter than the single-sample ELBO.
+* **Tests check the maths, not just the shapes**: the closed-form KL and the Gaussian likelihood are compared with `torch.distributions`, and the importance-weighted bound is checked to be tighter than the single-sample ELBO.
 
 ## References
 
 * Kingma, D. P. & Welling, M. (2014). Auto-Encoding Variational Bayes. *ICLR*. [arXiv:1312.6114](https://arxiv.org/abs/1312.6114)
 * Rezende, D. J., Mohamed, S. & Wierstra, D. (2014). Stochastic Backpropagation and Approximate Inference in Deep Generative Models. *ICML*. [arXiv:1401.4082](https://arxiv.org/abs/1401.4082)
 * Burda, Y., Grosse, R. & Salakhutdinov, R. (2016). Importance Weighted Autoencoders. *ICLR*. [arXiv:1509.00519](https://arxiv.org/abs/1509.00519)
+* Rybkin, O., Daniilidis, K. & Levine, S. (2021). Simple and Effective VAE Training with Calibrated Decoders. *ICML*. [arXiv:2006.13202](https://arxiv.org/abs/2006.13202)
 * Higgins, I. et al. (2017). β-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework. *ICLR*.
 * Yang, J. et al. (2023). MedMNIST v2: A large-scale lightweight benchmark for 2D and 3D biomedical image classification. *Scientific Data* 10, 41.
 

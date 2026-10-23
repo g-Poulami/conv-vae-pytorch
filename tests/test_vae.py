@@ -56,3 +56,42 @@ def test_can_overfit_a_single_batch():
         loss.backward()
         opt.step()
     assert loss.item() < 0.8 * first.item()
+
+
+def test_gaussian_nll_matches_torch_normal_in_eval_mode():
+    torch.manual_seed(0)
+    model = ConvVAE(latent_dim=4, likelihood="gaussian").eval()
+    x = torch.rand(4, 1, 28, 28)
+    logits = torch.randn(4, 1, 28, 28)
+    ref = -Normal(torch.sigmoid(logits), model.log_sigma.exp()).log_prob(x)
+    assert torch.allclose(model.pixel_nll(logits, x), ref, atol=1e-4)
+
+
+def test_gaussian_sigma_is_calibrated_during_training():
+    torch.manual_seed(0)
+    model = ConvVAE(latent_dim=4, likelihood="gaussian").train()
+    x = torch.rand(8, 1, 28, 28)
+    before = model.log_sigma.clone()
+    elbo_terms(model, x)
+    assert not torch.equal(before, model.log_sigma)  # running estimate moved
+
+
+def test_gaussian_decoder_learns_grey_level_images():
+    torch.manual_seed(0)
+    model = ConvVAE(in_channels=3, latent_dim=8, likelihood="gaussian")
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    x = torch.rand(16, 3, 28, 28)
+    mse0 = (model.reconstruct(x) - x).pow(2).mean().item()
+    for _ in range(60):
+        loss, _, _ = elbo_terms(model, x)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+    assert (model.reconstruct(x) - x).pow(2).mean().item() < mse0
+
+
+def test_old_checkpoint_config_still_loads():
+    cfg = {"in_channels": 1, "latent_dim": 16, "hidden_dim": 256, "image_size": 28}
+    model = ConvVAE(**cfg)
+    model.load_state_dict(ConvVAE(**cfg).state_dict())
+    assert model.likelihood == "bernoulli"
