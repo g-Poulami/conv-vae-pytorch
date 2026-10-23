@@ -1,0 +1,22 @@
+{
+  "dataset": "mnist",
+  "latent_dim": 16,
+  "hidden_dim": 256,
+  "epochs": 50,
+  "batch_size": 128,
+  "lr": 0.001,
+  "beta": 1.0,
+  "kl_warmup_epochs": 0,
+  "iw_samples": 100,
+  "seed": 0,
+  "data_dir": "data",
+  "out_dir": "runs",
+  "name": null,
+  "num_workers": 2,
+  "device": "cpu",
+  "n_params": 1688289,
+  "n_train": 55000,
+  "n_val": 5000,
+  "n_test": 10000,
+  "binarised": true
+}

@@ -1,0 +1,14 @@
+{
+  "test_neg_elbo": 142.5396048095703,
+  "test_rec": 135.8309651855469,
+  "test_kl": 6.708636196136474,
+  "test_nll_iw100": 139.36265939941407,
+  "active_units": 2,
+  "latent_dim": 2,
+  "posterior_mean_variance_per_dim": [
+    1.0053,
+    1.301
+  ],
+  "checkpoint_epoch": 30,
+  "best_val_neg_elbo": 142.73035048828126
+}
